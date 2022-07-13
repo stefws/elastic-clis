@@ -1,0 +1,57 @@
+#!/bin/bash
+
+ESHOST=${ESHOST:-localhost}
+
+DATAFN=${TMP:-/tmp}/allocacmd.$$
+
+usage() {
+  echo "" >&2
+  echo "Usage: $0 [ -p | -h ] [ all | primaries | new_primaries | none | remove (default) ]" >&2
+  echo "" >&2
+  echo "set mode of or remove cluster.routing.allocation.enable" >&2
+  echo "" >&2
+  echo "-p : operate in persistent, default is transcient" >&2
+  echo "-h : print this usage" >&2
+  echo "" >&2
+  exit 1
+}
+
+SPC=transient
+
+while getopts "ph?" o; do
+    case "${o}" in
+        p)
+            SPC=persistent
+            ;;
+        *|h|?)
+            usage
+            ;;
+    esac
+done
+shift $((OPTIND-1))
+
+
+CMD=${1:-null}
+case $CMD in
+  "all" | "primaries" | "new_primaries" | "none" )
+    CMD="\"$CMD\""
+    ;;
+  "remove" | "null")
+    CMD=null
+    ;;
+  *)
+    echo unknown mode $CMD given, aborting...
+    exit -1
+    ;;
+esac
+
+echo '{' > $DATAFN
+echo "    \"$SPC\" : {" >> $DATAFN
+echo "        \"cluster.routing.allocation.enable\" : $CMD" >> $DATAFN
+echo '    }' >> $DATAFN
+echo '}' >> $DATAFN
+
+
+curl -knsX PUT "https://$ESHOST:9200/_cluster/settings?flat_settings=true&pretty" -H 'Content-Type: application/json' --data-binary @$DATAFN
+
+rm -f $DATAFN

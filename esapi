@@ -1,0 +1,74 @@
+#!/bin/sh
+
+ESHOST="${ESHOST:-localhost}"
+INDEX=""
+GETCMD=""
+HDR=""
+BODY=""
+CMD=""
+REQ=""
+
+usage() {
+  echo "" >&2
+  echo "Usage: $0 { -g GET-CMD | [-H contenttype2use -d body-file] -p POST-CMD | [-H contenttype2use -d body-file] -P PUT-CMD | INDEX | -h } " >&2
+  echo "" >&2
+  echo "exit 0 if INDEX exists otherwise -1 or perform get/post/put CMD on cluster host: $ESHOST" >&2
+  echo "" >&2
+  echo "-g : make GET-CMD via https get, eg. _cat/shards, _cat/nodes, index1,index2/_stats" >&2
+  echo "-H : use contenttype2use, eg. for some post/put cmds use: 'application/json'" >&2
+  echo "-d : optional read data from body-file" >&2
+  echo "-p : make POST-CMD via https post, eg. optional -H Content-Type: contenttype2use" >&2
+  echo "-P : make PUT-CMD via https put, eg. optional -H Content-Type: contenttype2use" >&2
+  echo "-h : print this usage" >&2
+  echo "" >&2
+  exit 1
+}
+
+while getopts ":H:d:g:p:P:h" o; do
+    case "${o}" in
+        :)
+            echo ""
+            echo "Error: -${OPTARG} requires an argument."
+            usage
+            ;;
+        H)
+            [ ! -z "${OPTARG}" ] && HDR="${OPTARG}"
+            ;;
+        d)
+            [ ! -z "${OPTARG}" ] && BODY="${OPTARG}" && [ ! -r "$BODY" ] && echo "ABORTING - '$BODY' not a readable file" && exit 1
+            ;;
+        g)
+            [ -z "${OPTARG}" ] || GETCMD=${OPTARG}
+            ;;
+        p)
+            [ ! -z "${OPTARG}" ] && CMD=${OPTARG} && REQ=POST
+            ;;
+        P)
+            [ ! -z "${OPTARG}" ] && CMD=${OPTARG} && REQ=PUT
+            ;;
+        *|h|?)
+            usage
+            ;;
+    esac
+done
+shift $((OPTIND-1))
+
+[ $# -eq 1 ] && INDEX=$1
+
+if [ ! -z "$GETCMD" ]; then
+  curl -knsX GET "https://$ESHOST:9200/$GETCMD"
+elif [ ! -z "$CMD" -a ! -z "$REQ" ]; then
+  if  [ -z "$HDR" ]; then
+    curl -knsX "$REQ" "https://$ESHOST:9200/$CMD"
+  elif [ ! -z "$BODY" ]; then
+    curl -knsX "$REQ" -H "Content-Type: $HDR" -d @"$BODY" "https://$ESHOST:9200/$CMD"
+  else
+    echo "ABORTING - no body file given"
+    grep set-exit-val-to-not-zero /dev/zero > /dev/null
+  fi
+elif [ ! -z "$INDEX" ]; then
+  curl -kns --head "https://$ESHOST:9200/$INDEX" | grep ' 200 OK' > /dev/null
+else
+  usage
+fi
+exit $?

@@ -1,0 +1,151 @@
+#!/bin/bash
+
+# script to launch a reindexing task of the indices
+# arg.s: <source-pattern> <destination-index>
+# IMPORTANT: destination index must exist with proper mapping
+
+ESHOST="${ESHOST:-localhost}"
+
+usage() {
+  echo "" >&2
+  echo "Usage: $0 { [-{l|L} LOGFILE] [-a] [-r REQSPERSEC] -s SRC-INDEX -{d|D} DEST-INDEX | -h } " >&2
+  echo "" >&2
+  echo "Reindex SRC-INDEX to DEST-INDEX optional add alias SRC-INDEX on DEST-INDEX afterwards @ cluster host: $ESHOST" >&2
+  echo "" >&2
+  echo "-s : source index pattern, eg. 'ebopsyslog-YYYY.MM.*'" >&2
+  echo "-d : destination index must exists, eg. ebopsyslog.YYYY" >&2
+  echo "-D : destination index optional creates index, eg. ebopsyslog.YYYY" >&2
+  echo "-l : log actions to LOG2FILE instead of to stdout" >&2
+  echo "-L : append actions to LOG2FILE instead of to stdout" >&2
+  echo "-a : add alias SRC-INDEX to DEST-INDEX and delete SRC-INDEX when task has finished (possible good idea to execute from cron/a screen session)" >&2
+  echo "-r : use REQSPERSEC (number between 1-1000, default: 100)" >&2
+  echo "-h : print this usage" >&2
+  echo "" >&2
+  exit 1
+}
+
+SRCINDEX=""
+DESTINDEX=""
+DESTCRT=false
+ADDALIAS=false
+REQSPERSEC=100
+while getopts "l:L:ar:s:d:D:hu" o; do
+    case "${o}" in
+        l)
+            exec > "${OPTARG}" 2>&1
+            ;;
+        L)
+            exec >> "${OPTARG}" 2>&1
+            ;;
+        r)
+            REQSPERSEC=${OPTARG}
+            ;;
+        a)
+            ADDALIAS=true
+            ;;
+        s)
+            SRCINDEX=${OPTARG}
+            ;;
+        d|D)
+            DESTINDEX=${OPTARG}
+            [ "${o}" = "D" ] && DESTCRT=true
+            ;;
+        *|h|?)
+            usage
+            ;;
+    esac
+done
+shift $((OPTIND-1))
+
+# assert source & destination indicies
+[ "$SRCINDEX" ] || usage
+[ "$DESTINDEX" ] || usage
+esapi "$SRCINDEX"
+[ $? -ne 0 ] && echo "ABORTING - index $SRCINDEX does not exits in cluster @ ${ESHOST}" && exit -1
+esapi "$DESTINDEX"
+if [ $? -ne 0 ]; then
+  if [ "$DESTCRT" = "false" ]; then
+    echo "ABORTING - index $DESTINDEX does not exits in cluster @ ${ESHOST}"
+    exit -1
+  else
+    echo "creating $DESTINDEX..."
+    esapi -P "$DESTINDEX?pretty"
+  fi
+fi
+
+# data for QA
+if [ "$ADDALIAS" = "true" ]; then
+  srcdocs=`esapi -g _cat/count/$SRCINDEX | cut -f3 -d' '`
+  destdocs=`esapi -g _cat/count/$DESTINDEX | cut -f3 -d' '`
+fi
+
+# prepare reindex body
+REINDEXCMD=${TMP:-/tmp}/`basename $0`.reidxcmd.$$
+trap "rm -f ${REINDEXCMD}*" SIGINT EXIT SIGTERM
+
+cat > $REINDEXCMD <<EOF
+{
+  "conflicts": "proceed",
+  "source": {
+    "size":1000,
+    "index": "$SRCINDEX"
+  },
+  "dest": {
+    "index": "$DESTINDEX"
+  }
+}
+EOF
+
+# request reindex operation and hang around until task is finshed
+echo "waiting for the reindex OP from $SRCINDEX to $DESTINDEX of $srcdocs doc(s)..."
+esapi -H application/json -d $REINDEXCMD -p "_reindex?requests_per_second=$REQSPERSEC&wait_for_completion=true&pretty" > $REINDEXCMD.res 2>&1
+
+# hang around for creating alias?
+if [ "$ADDALIAS" = "true" ]; then
+  createalias=false
+  # assert QA, did reindex finish already
+  docsadded=`jq .total < $REINDEXCMD.res`
+  # success?
+  if [ $docsadded -ne $srcdocs ]; then
+    # okay not finished yet, go for our task ID
+    evalstr="`esapi -g '_tasks?actions=*reindex&detailed=true' | jq . |
+       awk -F': ' -v sidx="$SRCINDEX" -v didx="$DESTINDEX" '\
+                   BEGIN{intasklist=0;node=""}\
+                   /"tasks": /{intasklist=1;next}/"name": /{intasklist=0;next}\
+                   intasklist==0{next}\
+                   /"node": /{if (node != "" && index(desc,sidx) && index(desc,didx)) {exit}; gsub(/"/,"",$2);gsub(/,/,"",$2);node=$2}\
+                   /"id": /{gsub(/,/,"",$2);id=$2;next}\
+                   /"description": /{gsub(/,/,"",$2);desc=$2;next}\
+                   END{if (node != "" && id != "") {print "node="node" id="id}}'`"
+    # did we find task ID?
+    if [ -z "$evalstr" ]; then
+      echo "ERROR - not transferred expected number of docs ($docsadded != $srcdocs),"
+      echo "        please verify manually before create alias and removing source index: $SRCINDEX"
+      echo "ABORTING - failed to fetch reindex task ID for src: $SRCINDEX to dest: $DESTINDEX from cluster @ $ESHOST..."
+    else
+      eval $evalstr
+      # wait forever for task ID to finish...
+      echo "hanging around for taskID: $node:$id to complete..."
+      esapi -g "_tasks/$node:$id?wait_for_completion=true?pretty"
+
+      # assert QA
+      destdocs_after=`esapi -g _cat/count/$DESTINDEX | cut -f3 -d' '`
+      docsadded=$((destdocs_after - destdocs))
+
+      # success?
+      if [ $docsadded -ne $srcdocs ]; then
+        echo "ERROR - not transferred expected number of docs ($docsadded != $srcdocs),"
+        echo "        please verify manually before create alias and removing source index: $SRCINDEX"
+      else
+        createalias=true
+      fi
+    fi
+  else
+    createalias=true
+  fi
+  if [ "$createalias" = "true" ]; then
+    echo "successfully reindexed $docsadded doc(s) from index $SRCINDEX to $DESTINDEX"
+    echo "create alias $SRCINDEX to $DESTINDEX and remove index $SRCINDEX..."
+    esapi-alias -i $DESTINDEX -c -r -a $SRCINDEX | jq .
+  fi
+fi

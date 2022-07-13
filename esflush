@@ -1,0 +1,47 @@
+#!/bin/sh
+
+ESHOST="${ESHOST:-localhost}"
+
+usage() {
+  echo "" >&2
+  echo "Usage: $0 [ -a | -s | -h ] [ indicies2flush ]" >&2
+  echo "" >&2
+  echo "request a flush operation off specific indicies or off all indicies on cluster host: $ESHOST" >&2
+  echo "" >&2
+  echo "indicies2flush: comma separated name(s) of indicies to be flushed, eg. index1[,index2...]" >&2
+  echo "-a : flush all indicies (ignoring any indicies2flush)" >&2
+  echo "-s : make a synced flush" >&2
+  echo "-h : print this usage" >&2
+  echo "" >&2
+  exit 1
+}
+
+SYNCED=""
+ALL=0
+while getopts "ash?" o; do
+    case "${o}" in
+        s)
+            SYNCED="/synced"
+            ;;
+        a)
+            ALL=1
+            ;;
+        *|h|?)
+            usage
+            ;;
+    esac
+done
+shift $((OPTIND-1))
+
+indicies2flush="${1:-/}"
+
+if [ $ALL -eq 1  ]; then
+  indicies2flush=""
+elif [ "${indicies2flush}" == "/" ]; then
+  echo "ERROR: neither -a nor indicies2flush requested, see usage below" >&2
+  usage
+else
+  indicies2flush="${indicies2flush}/"
+fi
+
+curl -knsX POST "https://$ESHOST:9200/${indicies2flush}_flush${SYNCED}"

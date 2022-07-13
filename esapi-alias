@@ -1,0 +1,61 @@
+#!/bin/sh
+
+ESHOST="${ESHOST:-localhost}"
+
+usage() {
+  echo "" >&2
+  echo "Usage: $0 { {-c[ -r] |-d} -i INDEX -a ALIAS | -h } " >&2
+  echo "" >&2
+  echo "Create/Delete an ALIAS on INDEX optional remove index ALIAS @ cluster host: $ESHOST" >&2
+  echo "" >&2
+  echo "-c : create ALIAS" >&2
+  echo "-r : remove index ALIAS" >&2
+  echo "-d : delete ALIAS" >&2
+  echo "-h : print this usage" >&2
+  echo "" >&2
+  exit 1
+}
+
+INDEX=""
+ALIAS=""
+MODE=""
+RMIDX=false
+RMINDEX=""
+while getopts "crda:i:h" o; do
+    case "${o}" in
+        c)
+            MODE=add
+            ;;
+        d)
+            MODE=remove
+            ;;
+        r)
+            RMIDX=true
+            ;;
+        a)
+            ALIAS=${OPTARG}
+            ;;
+        i)
+            INDEX=${OPTARG}
+            ;;
+        *|h|?)
+            usage
+            ;;
+    esac
+done
+shift $((OPTIND-1))
+
+[ "$ALIAS" ] || usage
+[ "$INDEX" ] || usage
+[ "$MODE" ] || usage
+[ "$RMIDX" = "true" ] && [ "$MODE" = "add" ] && RMINDEX=", { 'remove_index': { 'index': '$ALIAS' }}"
+
+#DATA="`echo "{'actions' : [ { '$MODE': { 'index': '$INDEX', 'alias' : '$ALIAS' }} $RMINDEX ]}" | sed -e 's/\'/\"/g'`"
+DATA="{'actions' : [ { '$MODE': { 'index': '$INDEX', 'alias' : '$ALIAS' }} $RMINDEX ]}"
+BODY=${TMP:-/tmp}/databody.$$
+echo $DATA | tr "'" '"' >  $BODY
+#cat $BODY
+
+ESHOST="${ESHOST:-localhost}"
+curl -knsX POST "https://$ESHOST:9200/_aliases" -H 'Content-Type: application/json' -d @$BODY
+rm -f $BODY

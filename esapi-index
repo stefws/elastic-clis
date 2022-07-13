@@ -1,0 +1,31 @@
+#!/bin/sh
+
+ESHOST="${ESHOST:-localhost}"
+PATTERN=*
+
+usage() {
+  echo "" >&2
+  echo "Usage: $0 [ -p PATTERN | -h ] " >&2
+  echo "" >&2
+  echo "return list of indices on cluster host: $ESHOST" >&2
+  echo "" >&2
+  echo "-p : index prefix pattern to match (default: $PATTERN)" >&2
+  echo "-h : print this usage" >&2
+  echo "" >&2
+  exit 1
+}
+
+while getopts "p:h" o; do
+    case "${o}" in
+        p)
+            PATTERN=${OPTARG}
+            ;;
+        *|h|?)
+            usage
+            ;;
+    esac
+done
+shift $((OPTIND-1))
+
+ESHOST="${ESHOST:-localhost}"
+curl -knsX GET "https://$ESHOST:9200/$PATTERN"

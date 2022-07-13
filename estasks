@@ -1,0 +1,5 @@
+#!/bin/sh
+
+ESHOST=${ESHOST:-localhost}
+curl -knsX GET "https://$ESHOST:9200/_cluster/pending_tasks?pretty"
+
