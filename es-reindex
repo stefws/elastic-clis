@@ -61,14 +61,14 @@ shift $((OPTIND-1))
 [ "$SRCINDEX" ] || usage
 [ "$DESTINDEX" ] || usage
 esapi "$SRCINDEX"
-[ $? -ne 0 ] && echo "ABORTING - index $SRCINDEX does not exits in cluster @ ${ESHOST}" && exit -1
+[ $? -ne 0 ] && echo "`date` ABORTING - index $SRCINDEX does not exits in cluster @ ${ESHOST}" && exit -1
 esapi "$DESTINDEX"
 if [ $? -ne 0 ]; then
   if [ "$DESTCRT" = "false" ]; then
-    echo "ABORTING - index $DESTINDEX does not exits in cluster @ ${ESHOST}"
+    echo "`date` ABORTING - index $DESTINDEX does not exits in cluster @ ${ESHOST}"
     exit -1
   else
-    echo "creating $DESTINDEX..."
+    echo "`date` creating $DESTINDEX..."
     esapi -P "$DESTINDEX?pretty"
   fi
 fi
@@ -97,7 +97,7 @@ cat > $REINDEXCMD <<EOF
 EOF
 
 # request reindex operation and hang around until task is finshed
-echo "waiting for the reindex OP from $SRCINDEX to $DESTINDEX of $srcdocs doc(s)..."
+echo "`date` waiting for the reindex OP from $SRCINDEX to $DESTINDEX of $srcdocs doc(s)..."
 esapi -H application/json -d $REINDEXCMD -p "_reindex?requests_per_second=$REQSPERSEC&wait_for_completion=true&pretty" > $REINDEXCMD.res 2>&1
 
 # hang around for creating alias?
@@ -119,13 +119,13 @@ if [ "$ADDALIAS" = "true" ]; then
                    END{if (node != "" && id != "") {print "node="node" id="id}}'`"
     # did we find task ID?
     if [ -z "$evalstr" ]; then
-      echo "ERROR - not transferred expected number of docs ($docsadded != $srcdocs),"
-      echo "        please verify manually before create alias and removing source index: $SRCINDEX"
-      echo "ABORTING - failed to fetch reindex task ID for src: $SRCINDEX to dest: $DESTINDEX from cluster @ $ESHOST..."
+      echo "`date` ERROR - not transferred expected number of docs ($docsadded != $srcdocs),"
+      echo "`date`         please verify manually before create alias and removing source index: $SRCINDEX"
+      echo "`date` ABORTING - failed to fetch reindex task ID for src: $SRCINDEX to dest: $DESTINDEX from cluster @ $ESHOST..."
     else
       eval $evalstr
       # wait forever for task ID to finish...
-      echo "hanging around for taskID: $node:$id to complete..."
+      echo "`date` hanging around for taskID: $node:$id to complete..."
       esapi -g "_tasks/$node:$id?wait_for_completion=true?pretty"
 
       # assert QA
@@ -134,8 +134,8 @@ if [ "$ADDALIAS" = "true" ]; then
 
       # success?
       if [ $docsadded -ne $srcdocs ]; then
-        echo "ERROR - not transferred expected number of docs ($docsadded != $srcdocs),"
-        echo "        please verify manually before create alias and removing source index: $SRCINDEX"
+        echo "`date` ERROR - not transferred expected number of docs ($docsadded != $srcdocs),"
+        echo "`date`         please verify manually before create alias and removing source index: $SRCINDEX"
       else
         createalias=true
       fi
@@ -144,8 +144,8 @@ if [ "$ADDALIAS" = "true" ]; then
     createalias=true
   fi
   if [ "$createalias" = "true" ]; then
-    echo "successfully reindexed $docsadded doc(s) from index $SRCINDEX to $DESTINDEX"
-    echo "create alias $SRCINDEX to $DESTINDEX and remove index $SRCINDEX..."
+    echo "`date` successfully reindexed $docsadded doc(s) from index $SRCINDEX to $DESTINDEX"
+    echo "`date` create alias $SRCINDEX to $DESTINDEX and remove index $SRCINDEX..."
     esapi-alias -i $DESTINDEX -c -r -a $SRCINDEX | jq .
   fi
 fi
