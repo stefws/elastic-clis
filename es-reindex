@@ -2,7 +2,7 @@
 
 # script to launch a reindexing task of the indices
 # arg.s: <source-pattern> <destination-index>
-# IMPORTANT: destination index must exist with proper mapping
+# IMPORTANT: correct destination index mapping must exist prior to calling
 
 ESHOST="${ESHOST:-localhost}"
 
@@ -60,9 +60,9 @@ shift $((OPTIND-1))
 # assert source & destination indicies
 [ "$SRCINDEX" ] || usage
 [ "$DESTINDEX" ] || usage
-esapi "$SRCINDEX"
+esapi-catindex -p "$SRCINDEX" | grep "$SRCINDEX" > /dev/null
 [ $? -ne 0 ] && echo "`date` ABORTING - index $SRCINDEX does not exits in cluster @ ${ESHOST}" && exit -1
-esapi "$DESTINDEX"
+esapi-catindex -p "$DESTINDEX" | grep "$DESTINDEX" > /dev/null
 if [ $? -ne 0 ]; then
   if [ "$DESTCRT" = "false" ]; then
     echo "`date` ABORTING - index $DESTINDEX does not exits in cluster @ ${ESHOST}"
@@ -70,6 +70,8 @@ if [ $? -ne 0 ]; then
   else
     echo "`date` creating $DESTINDEX..."
     esapi -P "$DESTINDEX?pretty"
+    esapi-catindex -p "$DESTINDEX" | grep "$DESTINDEX" > /dev/null
+    [ $? -ne 0 ] && echo "`date` ABORTING - index $DESTINDEX not created successful in cluster @ ${ESHOST}" && exit -1
   fi
 fi
 
@@ -127,7 +129,6 @@ if [ "$ADDALIAS" = "true" ]; then
       # wait forever for task ID to finish...
       echo "`date` hanging around for taskID: $node:$id to complete..."
       esapi -g "_tasks/$node:$id?wait_for_completion=true?pretty"
-
       # assert QA
       destdocs_after=`esapi -g _cat/count/$DESTINDEX | cut -f3 -d' '`
       docsadded=$((destdocs_after - destdocs))
